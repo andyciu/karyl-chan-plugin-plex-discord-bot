@@ -4,19 +4,8 @@ WORKDIR /app
 
 # Install pnpm
 RUN npm install -g pnpm
-
-# Install plugin-sdk dependencies and build it
-COPY plugin-sdk ./plugin-sdk
-WORKDIR /app/plugin-sdk
-RUN pnpm install && pnpm run build
-
-# Back to plugin-plex
-WORKDIR /app
 COPY package.json pnpm-workspace.yaml ./
 COPY tsconfig.json ./
-
-# Create symlink to built plugin-sdk
-RUN mkdir -p packages && cp -r /app/plugin-sdk packages/plugin-sdk
 
 # Install dependencies
 RUN pnpm install

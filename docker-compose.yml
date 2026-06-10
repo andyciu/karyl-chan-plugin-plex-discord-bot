@@ -11,6 +11,7 @@ services:
       context: ./karyl-chan-main
       dockerfile: packages/bot/Dockerfile
     container_name: karyl-chan-bot
+    hostname: karyl-chan-bot
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -40,10 +41,10 @@ services:
       # 掛載資料庫目錄（保留資料）
       - ./data:/usr/src/app/data
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health/ready"]
-      interval: 30s
+      test: ["CMD", "node", "-e", "require('http').get('http://karyl-chan-bot:3000/api/health/ready', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 10
       start_period: 60s
 
   karyl-plex:
@@ -52,6 +53,7 @@ services:
       context: ./packages/plugin-plex
       dockerfile: Dockerfile
     container_name: karyl-plex
+    hostname: karyl-plex
     restart: unless-stopped
     ports:
       - "3001:3000"
@@ -62,8 +64,9 @@ services:
 
       # === 與 karyl-chan bot 溝通的 URL ===
       # Docker compose 內部網路，用服務名稱作為 hostname
-      BOT_URL: http://karyl-chan:3000
+      BOT_URL: http://karyl-chan-bot:3000
       PLUGIN_URL: http://karyl-plex:3000
+      KARYL_PLUGIN_SETUP_SECRET: ${KARYL_PLUGIN_SETUP_SECRET:?請設定 KARYL_PLUGIN_SETUP_SECRET 環境變數}
 
       # === 必填：Plex 設定 ===
       PLEX_HOSTNAME: ${PLEX_HOSTNAME:?請設定 PLEX_HOSTNAME 環境變數}
@@ -81,10 +84,10 @@ services:
         condition: service_healthy
 
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
-      interval: 30s
+      test: ["CMD", "node", "-e", "require('http').get('http://karyl-plex:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
       timeout: 10s
-      retries: 3
+      retries: 10
       start_period: 30s
 
 networks:

@@ -3,6 +3,8 @@ import {
   ApplicationCommandOptionType,
   definePlugin,
   definePluginCommand,
+  defineGuildFeature,
+  definePluginCapability,
   type CommandContext,
   type CommandReply,
   type PluginContext,
@@ -805,9 +807,41 @@ const helpCommand = definePluginCommand({
   },
 });
 
+// ── Guild Feature Definition ────────────────────────────────────────────────────
+
+const musicCapability = definePluginCapability({
+  key: "manage",
+  description: "Manage Plex playback and queue",
+});
+
+const musicFeature = defineGuildFeature({
+  key: "music",
+  name: "Music",
+  icon: "musical-note",
+  description: "Search and play music from your Plex library",
+  enabledByDefault: true,
+  commands: [
+    playCommand,
+    pauseCommand,
+    resumeCommand,
+    skipCommand,
+    stopCommand,
+    queueCommand,
+    clearqueueCommand,
+    removeCommand,
+    volumeCommand,
+    nowplayingCommand,
+    searchCommand,
+    joinCommand,
+    leaveCommand,
+    helpCommand,
+  ],
+});
+
 // ── Plugin Definition ─────────────────────────────────────────────────────────
 
 export const plugin = definePlugin({
+
   key: PLUGIN_KEY,
   name: "Karyl Plex",
   version: "0.1.0",
@@ -880,22 +914,9 @@ export const plugin = definePlugin({
     },
   ],
 
-  pluginCommands: [
-    playCommand,
-    pauseCommand,
-    resumeCommand,
-    skipCommand,
-    stopCommand,
-    queueCommand,
-    clearqueueCommand,
-    removeCommand,
-    volumeCommand,
-    nowplayingCommand,
-    searchCommand,
-    joinCommand,
-    leaveCommand,
-    helpCommand,
-  ],
+  capabilities: [musicCapability],
+
+  guildFeatures: [musicFeature],
 
   async onStart(ctx: PluginContext): Promise<void> {
     // Load Plex configuration
