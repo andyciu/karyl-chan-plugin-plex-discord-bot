@@ -1,0 +1,92 @@
+# karyl-chan-bot + karyl-plex plugin 本機開發測試用
+# 使用方式：
+#   1. 填入下方的環境變數（特別是 BOT_TOKEN, ENCRYPTION_KEY, BOT_OWNER_IDS）
+#   2. 填入你的 Plex 設定（PLEX_HOSTNAME, PLEX_TOKEN）
+#   3. 執行 docker compose up -d
+
+services:
+  karyl-chan:
+    # 從 monorepo 原始碼建置
+    build:
+      context: ./karyl-chan-main
+      dockerfile: packages/bot/Dockerfile
+    container_name: karyl-chan-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # === 必填：Discord Bot Token ===
+      BOT_TOKEN: ${BOT_TOKEN:?請設定 BOT_TOKEN 環境變數}
+
+      # === 必填：用於加密敏感資料的金鑰 ===
+      # 產生方式：powershell -Command "[System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32) | ForEach-Object { $_.ToString('x2') }"
+      # 或在 Linux/Mac: openssl rand -hex 32
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?請設定 ENCRYPTION_KEY 環境變數}
+
+      # === 必填：Bot 擁有者的 Discord User ID ===
+      # 多個用逗號分隔。這個使用者可以用 /login 在 DM 取得 admin 登入連結
+      BOT_OWNER_IDS: ${BOT_OWNER_IDS:?請設定 BOT_OWNER_IDS 環境變數}
+
+      # Node 環境
+      NODE_ENV: production
+
+      # 對外 URL（本機測試用 HTTP）
+      WEB_BASE_URL: http://localhost:3000
+
+      # 信任代理（Docker 內不需要）
+      TRUSTED_PROXY: false
+
+    volumes:
+      # 掛載資料庫目錄（保留資料）
+      - ./data:/usr/src/app/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  karyl-plex:
+    # 建置 plugin
+    build:
+      context: ./packages/plugin-plex
+      dockerfile: Dockerfile
+    container_name: karyl-plex
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      # === Plugin 基本設定 ===
+      PORT: 3000
+      HOST: 0.0.0.0
+
+      # === 與 karyl-chan bot 溝通的 URL ===
+      # Docker compose 內部網路，用服務名稱作為 hostname
+      BOT_URL: http://karyl-chan:3000
+      PLUGIN_URL: http://karyl-plex:3000
+
+      # === 必填：Plex 設定 ===
+      PLEX_HOSTNAME: ${PLEX_HOSTNAME:?請設定 PLEX_HOSTNAME 環境變數}
+      PLEX_PORT: ${PLEX_PORT:-32400}
+      PLEX_TOKEN: ${PLEX_TOKEN:?請設定 PLEX_TOKEN 環境變數}
+
+      # === 選填：Plex 額外設定 ===
+      # PLEX_USERNAME: your_plex_username
+      # PLEX_PASSWORD: your_plex_password
+      PLEX_SECTIONS_KEY: ${PLEX_SECTIONS_KEY:-1}
+      PLEX_DEFAULT_VOLUME: ${PLEX_DEFAULT_VOLUME:-20}
+
+    depends_on:
+      karyl-chan:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  default:
+    name: karyl-network

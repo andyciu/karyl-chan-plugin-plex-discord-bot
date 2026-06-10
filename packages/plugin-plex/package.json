@@ -1,0 +1,25 @@
+{
+  "name": "@karyl-chan/plugin-plex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plex Discord Bot plugin for karyl-chan - search and play music from your Plex library",
+  "type": "module",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "rimraf dist && tsc",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@karyl-chan/plugin-sdk": "workspace:*",
+    "plex-api": "^5.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.9.3"
+  }
+}

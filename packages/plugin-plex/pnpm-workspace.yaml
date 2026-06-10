@@ -1,0 +1,8 @@
+packages:
+  # Main plugin package
+  - "."
+  # Plugin SDK (local workspace) - relative path from plugin-plex directory
+  - "./plugin-sdk"
+
+# pnpm workspace configuration
+# This allows local workspace:* dependencies to resolve correctly
