@@ -9,11 +9,10 @@ karyl-chan-plugin-plex-discord-bot/
 ├── docker-compose.yml        # Docker 本機測試用 compose 檔
 ├── .env.example              # 環境變數範本
 ├── packages/
-│   └── plugin-plex/          # Plex 插件本体
+│   └── plugin-plex/          # Plex 插件本體
 │       ├── Dockerfile
 │       ├── src/
 │       └── ...
-├── karyl-chan-main/          # karyl-chan 主機器人（submodule 或複本）
 └── ...
 ```
 
