@@ -1,4 +1,4 @@
-import PlexAPI from "plex-api";
+﻿import PlexAPI from "plex-api";
 import {
   ApplicationCommandOptionType,
   definePlugin,
@@ -69,6 +69,9 @@ let plexConfig: PlexConfig | null = null;
 // Helper to get Plex base URL
 function getPlexUrl(): string {
   if (!plexConfig) return "";
+  if (plexConfig.port === 443) {
+    return `https://${plexConfig.hostname}`;
+  }
   return `http://${plexConfig.hostname}:${plexConfig.port}`;
 }
 
@@ -194,9 +197,12 @@ async function searchPlex(
 async function getAlbumTracks(
   client: PlexAPI,
   albumKey: string,
+  ctx: CommandContext,
 ): Promise<PlexTrack[]> {
   const result = await client.query(albumKey);
   if (!result.MediaContainer?.Metadata) return [];
+
+  ctx.log.info("Album tracks metadata", { metadata: result.MediaContainer.Metadata });
 
   return result.MediaContainer.Metadata.filter(
     (track: Record<string, unknown>) => track.type === "track",
@@ -208,7 +214,8 @@ async function getAlbumTracks(
       artist = String(track.grandparentTitle);
     }
     const media = track.Media as Array<Record<string, unknown>>;
-    const part = media?.[0] as Record<string, unknown>;
+    const partArray = (media?.[0] as Record<string, unknown>)?.Part as Array<Record<string, unknown>>;
+    const part = partArray?.[0] as Record<string, unknown>;
     return {
       key: String(part?.key || track.key || ""),
       title: String(track.title || "Unknown"),
@@ -290,6 +297,7 @@ const playCommand = definePluginCommand({
       // Join voice channel (user will join first)
       await ctx.voice.join({
         guildId: ctx.guildId,
+        userId: ctx.userId,
       });
 
       const state = await getGuildState(ctx);
@@ -297,13 +305,25 @@ const playCommand = definePluginCommand({
       if (results.length === 1) {
         // Single result - play directly
         const track = results[0];
+
+        // Get the actual media file URL via getAlbumTracks (which gets part.key)
+        const albumTracks = await getAlbumTracks(plexClient, track.key, ctx);
+        const mediaTrack = albumTracks[0];
+
+        if (!mediaTrack) {
+          return {
+            content: "Could not retrieve track media. Please try again.",
+            ephemeral: true,
+          };
+        }
+
         const queuedTrack: QueuedTrack = {
-          key: track.key,
+          key: mediaTrack.key,
           title: track.title,
           artist: track.artist || "Unknown Artist",
-          album: track.album || "",
-          thumb: track.thumb || "",
-          duration: 0,
+          album: track.album || mediaTrack.album,
+          thumb: track.thumb || mediaTrack.thumb,
+          duration: mediaTrack.duration,
           queuedBy: ctx.userDisplayName,
           queuedAt: Date.now(),
         };
@@ -314,7 +334,16 @@ const playCommand = definePluginCommand({
         await saveGuildState(ctx, state);
 
         const plexUrl = getPlexUrl();
-        const playUrl = `${plexUrl}${track.key}?X-Plex-Token=${plexConfig.token}`;
+        const playUrl = `${plexUrl}${mediaTrack.key}?X-Plex-Token=${plexConfig.token}`;
+
+        // playUrl log
+        ctx.log.info("Playing track from Plex", {
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          playUrl,
+        });
+        
         await ctx.voice.play({ guildId: ctx.guildId, url: playUrl });
 
         return {
