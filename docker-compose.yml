@@ -7,9 +7,7 @@
 services:
   karyl-chan:
     # 從 monorepo 原始碼建置
-    build:
-      context: ./karyl-chan-main
-      dockerfile: packages/bot/Dockerfile
+    image: ghcr.io/karyl-chan/karyl-chan-bot:latest
     container_name: karyl-chan-bot
     hostname: karyl-chan-bot
     restart: unless-stopped

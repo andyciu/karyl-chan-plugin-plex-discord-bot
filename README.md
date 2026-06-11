@@ -47,6 +47,7 @@ cp .env.example .env
 # - ENCRYPTION_KEY   （產生方式見下方）
 # - BOT_OWNER_IDS    （你的 Discord User ID）
 # - PLEX_HOSTNAME    （Plex 伺服器 IP/hostname）
+# - PLEX_PORT        （Plex 伺服器 Port)
 # - PLEX_TOKEN       （Plex 認證 token）
 ```
 
@@ -104,6 +105,7 @@ docker compose down
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
+| `KARYL_PLUGIN_SETUP_SECRET` | 是 | Plugin 設定驗證密鑰，用於插件初始化與安全驗證 |
 | `BOT_TOKEN` | 是 | Discord bot token |
 | `ENCRYPTION_KEY` | 是 | 32 位元 hex 字串 |
 | `BOT_OWNER_IDS` | 是 | Bot 擁有者 Discord ID |

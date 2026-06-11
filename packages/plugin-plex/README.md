@@ -79,6 +79,7 @@ services:
       - BOT_URL=http://karyl-chan:3000
       - PLUGIN_URL=http://karyl-plex:3000
       - PLEX_HOSTNAME=your-plex-server.local
+      - PLEX_PORT=32400
       - PLEX_TOKEN=your-plex-token
     depends_on:
       - karyl-chan
