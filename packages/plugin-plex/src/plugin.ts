@@ -5,9 +5,13 @@ import {
   definePluginCommand,
   defineGuildFeature,
   definePluginCapability,
+  definePluginComponent,
+  componentCustomId,
+  Events,
   type CommandContext,
   type CommandReply,
   type PluginContext,
+  type ComponentContext,
 } from "@karyl-chan/plugin-sdk";
 import { loadConfig } from "./config.js";
 
@@ -328,7 +332,8 @@ const playCommand = definePluginCommand({
           queuedAt: Date.now(),
         };
 
-        state.queue.push(queuedTrack);
+        // Only set as currentTrack, don't push to queue
+        // (queue is for upcoming tracks, currentTrack is what's currently playing)
         state.isPlaying = true;
         state.currentTrack = queuedTrack;
         await saveGuildState(ctx, state);
@@ -345,6 +350,9 @@ const playCommand = definePluginCommand({
         });
         
         await ctx.voice.play({ guildId: ctx.guildId, url: playUrl });
+
+        // Start tracking playback for auto-leave functionality
+        startPlaybackTracker(ctx, ctx.guildId, mediaTrack.duration);
 
         return {
           content: `🎵 Now playing: **${track.artist}** - ${track.title}`,
@@ -440,7 +448,39 @@ const skipCommand = definePluginCommand({
 
     try {
       await ctx.voice.stop(ctx.guildId);
-      return { content: "⏭️ Skipped!" };
+
+      // Check if there's a next track in queue
+      const state = await getGuildState(ctx);
+      if (state.queue.length > 0) {
+        const nextTrack = state.queue.shift()!;
+        state.currentTrack = nextTrack;
+        state.isPlaying = true;
+        state.isPaused = false;
+        await saveGuildState(ctx, state);
+
+        const plexUrl = getPlexUrl();
+        const playUrl = `${plexUrl}${nextTrack.key}?X-Plex-Token=${plexConfig!.token}`;
+
+        await ctx.voice.play({ guildId: ctx.guildId, url: playUrl });
+
+        // Restart tracker for new track
+        startPlaybackTracker(ctx, ctx.guildId, nextTrack.duration);
+
+        return {
+          content: `⏭️ Skipped! Now playing: **${nextTrack.artist}** - ${nextTrack.title}`,
+        };
+      } else {
+        // No more tracks in queue
+        state.currentTrack = null;
+        state.isPlaying = false;
+        await saveGuildState(ctx, state);
+
+        // Stop tracker and leave
+        stopPlaybackTracker(ctx.guildId);
+        await ctx.voice.leave(ctx.guildId);
+
+        return { content: "⏭️ Skipped! Queue is now empty." };
+      }
     } catch (err) {
       return {
         content: "Nothing to skip.",
@@ -462,6 +502,9 @@ const stopCommand = definePluginCommand({
     }
 
     try {
+      // Stop the playback tracker
+      stopPlaybackTracker(ctx.guildId);
+
       await ctx.voice.stop(ctx.guildId);
       await ctx.voice.leave(ctx.guildId);
 
@@ -779,6 +822,8 @@ const leaveCommand = definePluginCommand({
     }
 
     try {
+      // Stop the playback tracker
+      stopPlaybackTracker(ctx.guildId);
       await ctx.voice.leave(ctx.guildId);
 
       // Clear state
@@ -866,6 +911,172 @@ const musicFeature = defineGuildFeature({
     helpCommand,
   ],
 });
+
+// ── Playback Auto-Leave Logic ─────────────────────────────────────────────────
+
+interface PlaybackTracker {
+  /** Interval handle for polling playback status */
+  intervalHandle: ReturnType<typeof setInterval>;
+  /** Guild ID */
+  guildId: string;
+  /** Timestamp when current track started playing */
+  startedAt: number;
+  /** Expected duration of current track in ms */
+  duration: number;
+}
+
+/** Active playback trackers keyed by guildId */
+const playbackTrackers = new Map<string, PlaybackTracker>();
+
+/**
+ * Interface that both CommandContext and PluginContext satisfy.
+ * Used to abstract the common functionality needed by the playback tracker.
+ */
+interface PlaybackContext {
+  voice: {
+    status(guildId: string): Promise<{ connected: boolean; playing: boolean }>;
+    play(opts: { guildId: string; url: string }): Promise<unknown>;
+    leave(guildId: string): Promise<unknown>;
+  };
+  kv: {
+    guild<T>(guildId: string): {
+      get(key: string): Promise<T | null>;
+      set(key: string, value: T): Promise<unknown>;
+    };
+  };
+  log: {
+    info(message: string, data?: Record<string, unknown>): void;
+    error(message: string, data?: Record<string, unknown>): void;
+  };
+}
+
+/**
+ * Start tracking playback for a guild. Polls voice status and
+ * automatically leaves the voice channel when playback ends and queue is empty.
+ */
+function startPlaybackTracker(ctx: PlaybackContext, guildId: string, duration: number): void {
+  // Clear any existing tracker for this guild
+  stopPlaybackTracker(guildId);
+
+  const startedAt = Date.now();
+
+  const handle = setInterval(async () => {
+    try {
+      const status = await ctx.voice.status(guildId);
+      const state = await getGuildStateFromPlaybackContext(ctx, guildId);
+
+      // Calculate expected end time
+      const expectedEndTime = startedAt + duration;
+
+      // Check if playback should have ended:
+      // 1. Bot is not connected, OR
+      // 2. Bot is connected but not playing, OR
+      // 3. Expected playback time has passed (with 2 second buffer)
+      if (!status.connected || !status.playing || Date.now() > expectedEndTime + 2000) {
+        // Check if queue has next track
+        if (state.queue.length > 0) {
+          // There's a next track in queue - play it
+          const nextTrack = state.queue.shift()!;
+          state.currentTrack = nextTrack;
+          state.isPlaying = true;
+          state.isPaused = false;
+          await saveGuildStateFromPlaybackContext(ctx, guildId, state);
+
+          const plexUrl = getPlexUrl();
+          const playUrl = `${plexUrl}${nextTrack.key}?X-Plex-Token=${plexConfig!.token}`;
+
+          ctx.log.info("Playing next track from queue", {
+            title: nextTrack.title,
+            artist: nextTrack.artist,
+            playUrl,
+          });
+
+          await ctx.voice.play({ guildId, url: playUrl });
+
+          // Restart tracker for new track (this replaces current tracker)
+          startPlaybackTracker(ctx, guildId, nextTrack.duration);
+          return; // Don't continue in the old interval
+        } else {
+          // Queue is empty - playback finished, leave the channel
+          ctx.log.info("Playback finished and queue empty, leaving voice channel");
+          try {
+            await ctx.voice.leave(guildId);
+          } catch {
+            // Ignore errors if already disconnected
+          }
+
+          // Clear state
+          state.isPlaying = false;
+          state.isPaused = false;
+          state.currentTrack = null;
+          await saveGuildStateFromPlaybackContext(ctx, guildId, state);
+
+          // Stop the tracker
+          stopPlaybackTracker(guildId);
+          return;
+        }
+      }
+    } catch (err) {
+      ctx.log.error("Error in playback tracker", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, 3000); // Poll every 3 seconds
+
+  playbackTrackers.set(guildId, {
+    intervalHandle: handle,
+    guildId,
+    startedAt,
+    duration,
+  });
+
+  ctx.log.info("Started playback tracker", { guildId, duration });
+}
+
+/** Stop tracking playback for a guild */
+function stopPlaybackTracker(guildId: string): void {
+  const tracker = playbackTrackers.get(guildId);
+  if (tracker) {
+    clearInterval(tracker.intervalHandle);
+    playbackTrackers.delete(guildId);
+  }
+}
+
+/**
+ * Get guild state using the playback context interface.
+ */
+async function getGuildStateFromPlaybackContext(
+  ctx: PlaybackContext,
+  guildId: string,
+): Promise<GuildState> {
+  const kv = ctx.kv.guild<GuildState>(guildId);
+  const state = await kv.get("state");
+  if (state) return state;
+
+  // Initialize default state
+  const newState: GuildState = {
+    queue: [],
+    currentTrack: null,
+    isPlaying: false,
+    isPaused: false,
+    volume: plexConfig?.defaultVolume ?? 0.2,
+    repeatMode: "off",
+  };
+  await kv.set("state", newState);
+  return newState;
+}
+
+/**
+ * Save guild state using the playback context interface.
+ */
+async function saveGuildStateFromPlaybackContext(
+  ctx: PlaybackContext,
+  guildId: string,
+  state: GuildState,
+): Promise<void> {
+  const kv = ctx.kv.guild<GuildState>(guildId);
+  await kv.set("state", state);
+}
 
 // ── Plugin Definition ─────────────────────────────────────────────────────────
 
