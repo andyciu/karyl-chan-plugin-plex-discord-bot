@@ -313,8 +313,6 @@ async function getAlbumTracks(
   });
 }
 
-// ── Library Navigation Functions ──────────────────────────────────────────────
-
 /**
  * Get all artists from Plex music library
  */
@@ -333,7 +331,7 @@ async function getArtists(
         index: idx + 1,
         key: String(artist.key || ""),
         title: String(artist.title || "Unknown Artist"),
-        subtitle: `${artist.childCount || 0} albums`,
+        subtitle: undefined, // Album count not available in this API response
         thumb: String(artist.thumb || ""),
         type: "artists" as ListLevel,
       }));
@@ -365,7 +363,7 @@ async function getArtistAlbums(
         index: idx + 1,
         key: String(album.key || ""),
         title: String(album.title || "Unknown Album"),
-        subtitle: `${album.childCount || 0} tracks`,
+        subtitle: undefined, // Track count requires additional API queries
         thumb: String(album.thumb || ""),
         type: "albums" as ListLevel,
         parentKey: artistKey,
