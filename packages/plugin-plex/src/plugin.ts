@@ -488,6 +488,7 @@ async function getAlbumTracks(
   client: PlexAPI,
   albumKey: string,
   ctx: CommandContext,
+  fallbackArtist?: string,
 ): Promise<PlexTrack[]> {
   const result = await client.query(albumKey);
   if (!result.MediaContainer?.Metadata) return [];
@@ -502,6 +503,10 @@ async function getAlbumTracks(
       artist = String(track.originalTitle);
     } else if ("grandparentTitle" in track && track.grandparentTitle) {
       artist = String(track.grandparentTitle);
+    }
+    // Use fallback artist if Plex API doesn't return artist info
+    if (!artist && fallbackArtist) {
+      artist = fallbackArtist;
     }
     const media = track.Media as Array<Record<string, unknown>>;
     const partArray = (media?.[0] as Record<string, unknown>)?.Part as Array<Record<string, unknown>>;
@@ -738,7 +743,7 @@ const playCommand = definePluginCommand({
       await ctx.voice.play({ guildId: ctx.guildId, url: playUrl });
 
       // Start tracking playback for auto-leave functionality
-      startPlaybackTracker(ctx, ctx.guildId, nextTrack.duration);
+      startPlaybackTracker(ctx, ctx.guildId, ctx.channelId, nextTrack.duration);
 
       const embed = nextTrack.thumb
         ? {
@@ -822,7 +827,7 @@ const skipCommand = definePluginCommand({
   integrationTypes: ["guild_install"],
   contexts: ["Guild"],
   async handler(ctx: CommandContext): Promise<CommandReply> {
-    if (!ctx.guildId) {
+    if (!ctx.guildId || !ctx.channelId) {
       return { content: "Use this inside a server.", ephemeral: true };
     }
 
@@ -844,7 +849,23 @@ const skipCommand = definePluginCommand({
         await ctx.voice.play({ guildId: ctx.guildId, url: playUrl });
 
         // Restart tracker for new track
-        startPlaybackTracker(ctx, ctx.guildId, nextTrack.duration);
+        startPlaybackTracker(ctx, ctx.guildId, ctx.channelId, nextTrack.duration);
+
+        // Send now playing message with album image
+        await ctx.discord.messages.send({
+          channelId: ctx.channelId,
+          content: `🎵 Now playing: **${nextTrack.artist}** - ${nextTrack.title}`,
+          embeds: nextTrack.thumb
+            ? [
+                {
+                  title: `${nextTrack.artist} - ${nextTrack.title}`,
+                  image: {
+                    url: `${plexUrl}/photo/:/transcode?url=${encodeURIComponent(nextTrack.thumb)}&width=300&height=300&X-Plex-Token=${plexConfig!.token}`,
+                  },
+                },
+              ]
+            : [],
+        });
 
         return {
           content: `⏭️ Skipped! Now playing: **${nextTrack.artist}** - ${nextTrack.title}`,
@@ -853,6 +874,7 @@ const skipCommand = definePluginCommand({
         // No more tracks in queue
         state.currentTrack = null;
         state.isPlaying = false;
+        state.isPaused = false;
         await saveGuildState(ctx, state);
 
         // Stop tracker and leave
@@ -1075,6 +1097,7 @@ const nowplayingCommand = definePluginCommand({
       return { content: "Nothing is playing. Use `/plex-list` or `/plex-search` to find music, then `/plex-add-to-queue` and `/plex-play`.", ephemeral: true };
     }
 
+    const plexUrl = getPlexUrl();
     const status = state.isPaused ? "⏸️ Paused" : "🎵 Playing";
     const lines = [
       `${status}: **${state.currentTrack.artist}** - ${state.currentTrack.title}`,
@@ -1091,7 +1114,24 @@ const nowplayingCommand = definePluginCommand({
       lines.push(`Up next: ${state.queue.length} songs`);
     }
 
-    return { content: lines.join("\n") };
+    // Add album image if available
+    const embed = state.currentTrack.thumb
+      ? {
+          embeds: [
+            {
+              title: `Album: ${state.currentTrack.album || "Unknown Album"}`,
+              image: {
+                url: `${plexUrl}/photo/:/transcode?url=${encodeURIComponent(state.currentTrack.thumb)}&width=300&height=300&X-Plex-Token=${plexConfig!.token}`,
+              },
+            },
+          ],
+        }
+      : {};
+
+    return {
+      content: lines.join("\n"),
+      ...embed,
+    };
   },
 });
 
@@ -1457,7 +1497,7 @@ const listCommand = definePluginCommand({
 
           const display = formatListDisplay(albums, "albums");
           return {
-            content: `${display}\n\n**Albums by ${matchedArtist.title}**\n_Use \`/plex-list <number>\` to browse into an album._`,
+            content: `${display}\n\n**Albums by ${matchedArtist.title}**\n_Use \`/plex-list <number>\` to browse into an album, or \`/plex-add-to-queue <number>\` to add a track from an album._`,
             ephemeral: true,
           };
         }
@@ -1526,7 +1566,7 @@ const listCommand = definePluginCommand({
 
           const display = formatListDisplay(albums, "albums");
           return {
-            content: `${display}\n\n**Albums by ${matchedArtist.title}**\n_Use \`/plex-list <number>\` to browse into an album._`,
+            content: `${display}\n\n**Albums by ${matchedArtist.title}**\n_Use \`/plex-list <number>\` to browse into an album, or \`/plex-add-to-queue <number>\` to add a track from an album._`,
             ephemeral: true,
           };
         }
@@ -1723,7 +1763,8 @@ const addToQueueCommand = definePluginCommand({
         };
       } else if (listSession.level === "albums") {
         // Get all tracks from the album
-        const albumTracks = await getAlbumTracks(plexClient, item.key, ctx);
+        const artistName = listSession.parentQuery || "";
+        const albumTracks = await getAlbumTracks(plexClient, item.key, ctx, artistName);
 
         if (albumTracks.length === 0) {
           return {
@@ -1733,7 +1774,6 @@ const addToQueueCommand = definePluginCommand({
         }
 
         let addedCount = 0;
-        const artistName = listSession.parentQuery || "";
         for (const track of albumTracks) {
           const queuedTrack: QueuedTrack = {
             key: track.key,
@@ -1811,6 +1851,8 @@ interface PlaybackTracker {
   intervalHandle: ReturnType<typeof setInterval>;
   /** Guild ID */
   guildId: string;
+  /** Channel ID for sending now playing messages */
+  channelId: string;
   /** Timestamp when current track started playing */
   startedAt: number;
   /** Expected duration of current track in ms */
@@ -1825,6 +1867,18 @@ const playbackTrackers = new Map<string, PlaybackTracker>();
  * Used to abstract the common functionality needed by the playback tracker.
  */
 interface PlaybackContext {
+  discord: {
+    messages: {
+      send(args: {
+        channelId: string;
+        content?: string;
+        embeds?: Array<{
+          title?: string;
+          image?: { url: string };
+        }>;
+      }): Promise<unknown>;
+    };
+  };
   voice: {
     status(guildId: string): Promise<{ connected: boolean; playing: boolean }>;
     play(opts: { guildId: string; url: string }): Promise<unknown>;
@@ -1843,10 +1897,39 @@ interface PlaybackContext {
 }
 
 /**
+ * Send now playing message to channel (with album image if available)
+ */
+async function sendNowPlayingMessage(
+  ctx: PlaybackContext,
+  channelId: string,
+  track: { title: string; artist: string; album?: string; thumb?: string },
+): Promise<void> {
+  const plexUrl = getPlexUrl();
+  const embed = track.thumb
+    ? {
+        embeds: [
+          {
+            title: `${track.artist} - ${track.title}`,
+            image: {
+              url: `${plexUrl}/photo/:/transcode?url=${encodeURIComponent(track.thumb)}&width=300&height=300&X-Plex-Token=${plexConfig!.token}`,
+            },
+          },
+        ],
+      }
+    : {};
+
+  await ctx.discord.messages.send({
+    channelId,
+    content: `🎵 Now playing: **${track.artist}** - ${track.title}`,
+    ...embed,
+  });
+}
+
+/**
  * Start tracking playback for a guild. Polls voice status and
  * automatically leaves the voice channel when playback ends and queue is empty.
  */
-function startPlaybackTracker(ctx: PlaybackContext, guildId: string, duration: number): void {
+function startPlaybackTracker(ctx: PlaybackContext, guildId: string, channelId: string, duration: number): void {
   // Clear any existing tracker for this guild
   stopPlaybackTracker(guildId);
 
@@ -1885,8 +1968,16 @@ function startPlaybackTracker(ctx: PlaybackContext, guildId: string, duration: n
 
           await ctx.voice.play({ guildId, url: playUrl });
 
+          // Send now playing message with album image
+          await sendNowPlayingMessage(ctx, channelId, {
+            title: nextTrack.title,
+            artist: nextTrack.artist,
+            album: nextTrack.album,
+            thumb: nextTrack.thumb,
+          });
+
           // Restart tracker for new track (this replaces current tracker)
-          startPlaybackTracker(ctx, guildId, nextTrack.duration);
+          startPlaybackTracker(ctx, guildId, channelId, nextTrack.duration);
           return; // Don't continue in the old interval
         } else {
           // Queue is empty - playback finished, leave the channel
@@ -1918,6 +2009,7 @@ function startPlaybackTracker(ctx: PlaybackContext, guildId: string, duration: n
   playbackTrackers.set(guildId, {
     intervalHandle: handle,
     guildId,
+    channelId,
     startedAt,
     duration,
   });
