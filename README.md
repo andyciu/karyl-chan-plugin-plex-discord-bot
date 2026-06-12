@@ -100,6 +100,88 @@ docker compose up -d
 docker compose down
 ```
 
+## 指令使用說明
+
+### 播放控制
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-play <query>` | 搜尋並播放歌曲 |
+| `/plex-pause` | 暫停播放 |
+| `/plex-resume` | 恢復播放 |
+| `/plex-skip` | 跳過當前歌曲 |
+| `/plex-stop` | 停止播放並離開語音頻道 |
+
+### 佇列管理
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-queue [頁數]` | 檢視播放佇列 |
+| `/plex-clearqueue` | 清除所有歌曲 |
+| `/plex-remove <位置>` | 移除指定位置的歌曲 |
+| `/plex-add-to-queue <編號>` | 將瀏覽列表中的曲目加入佇列 |
+
+### 瀏覽 Plex 音樂庫
+
+`/plex-list` 指令讓你可以階層式瀏覽 Plex 音樂庫（Artist > Album > Track）。
+
+#### 基本用法
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-list` | 列出所有 Artists（附流水號） |
+| `/plex-list <編號>` | 瀏覽指定項目（依當前層級進入 Artist/Album） |
+| `/plex-list <關鍵字>` | 搜尋 Artist 或 Album |
+| `/plex-list <關鍵字> <編號>` | 搜尋後瀏覽結果 |
+
+#### 瀏覽流程範例
+
+```
+1. /plex-list                         → 顯示所有 Artists
+   📋 Artists (1-5 of 15)
+   #1  🎤 周杰倫 (25 albums)
+   #2  🎤 Taylor Swift (18 albums)
+   ...
+
+2. /plex-list 1                       → 進入 Artist #1，顯示其 Albums
+   📋 Albums by 周杰倫
+   #1  🎵 范特西 (10 tracks)
+   #2  🎵 七里香 (12 tracks)
+   ...
+
+3. /plex-list 2                       → 進入 Album #2，顯示其 Tracks
+   🎵 七里香 - 周杰倫
+   #1  🌧️ 擱淺 (4:31)
+   #2  🌧️ 園遊會 (4:09)
+   ...
+
+4. /plex-add-to-queue 3               → 將 Track #3 加入佇列
+   ✅ 已將「七里香 - 止戰之殤」加入佇列
+```
+
+#### 搜尋範例
+
+```
+/plex-list 周杰倫                     → 搜尋並顯示所有周杰倫相關結果
+/plex-list 周杰倫 1                   → 進入第一個結果（會是 Artist 頁面）
+```
+
+#### 注意事項
+
+- 列表會話有效期為 **10 分鐘**，逾時需重新開始瀏覽
+- 編號會話綁定頻道，不同頻道有獨立瀏覽狀態
+- 進入 Tracks 層級後，`/plex-list <編號>` 會顯示該曲目的詳細資訊（包含時長、格式等）
+
+### 其他指令
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-nowplaying` | 顯示當前播放曲目 |
+| `/plex-search <query>` | 搜尋 Plex 音樂庫 |
+| `/plex-join` | 加入你的語音頻道 |
+| `/plex-leave` | 離開語音頻道 |
+| `/plex-help` | 顯示所有指令說明 |
+
 ## Plugin 環境變數說明
 
 | 變數 | 必填 | 說明 |

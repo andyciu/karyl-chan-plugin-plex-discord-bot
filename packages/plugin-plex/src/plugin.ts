@@ -64,11 +64,93 @@ interface PlexSearchResult {
   offset: number;
 }
 
+// ── List Navigation Types ─────────────────────────────────────────────────────
+
+type ListLevel = "artists" | "albums" | "tracks";
+
+interface ListItem {
+  index: number;
+  key: string;
+  title: string;
+  subtitle?: string;
+  thumb?: string;
+  type: ListLevel;
+  duration?: number; // for tracks
+  parentKey?: string; // Artist key for albums, Album key for tracks
+  artist?: string; // for tracks display
+}
+
+interface ListSession {
+  guildId: string;
+  channelId: string;
+  level: ListLevel;
+  items: ListItem[];
+  parentQuery?: string; // Parent name for context (e.g., Artist name when showing albums)
+  createdAt: number;
+}
+
 // ── State Management ───────────────────────────────────────────────────────────
 
 // Global Plex API client (initialized with config)
 let plexClient: PlexAPI | null = null;
 let plexConfig: PlexConfig | null = null;
+
+/** Active list sessions keyed by `${guildId}-${channelId}` */
+const listSessions = new Map<string, ListSession>();
+
+/** TTL for list sessions in milliseconds (10 minutes) */
+const LIST_SESSION_TTL = 10 * 60 * 1000;
+
+/**
+ * Get or create a list session for the current channel.
+ */
+async function getListSession(
+  ctx: CommandContext,
+): Promise<ListSession | null> {
+  if (!ctx.guildId || !ctx.channelId) return null;
+  const sessionKey = `${ctx.guildId}-${ctx.channelId}`;
+  const session = listSessions.get(sessionKey);
+  
+  if (session) {
+    // Check if session is still valid
+    if (Date.now() - session.createdAt > LIST_SESSION_TTL) {
+      listSessions.delete(sessionKey);
+      return null;
+    }
+    return session;
+  }
+  return null;
+}
+
+/**
+ * Create or update a list session.
+ */
+function setListSession(ctx: CommandContext, session: ListSession): void {
+  if (!ctx.guildId || !ctx.channelId) return;
+  const sessionKey = `${ctx.guildId}-${ctx.channelId}`;
+  listSessions.set(sessionKey, session);
+}
+
+/**
+ * Clear the list session for the current channel.
+ */
+function clearListSession(ctx: CommandContext): void {
+  if (!ctx.guildId || !ctx.channelId) return;
+  const sessionKey = `${ctx.guildId}-${ctx.channelId}`;
+  listSessions.delete(sessionKey);
+}
+
+/**
+ * Periodically clean up expired list sessions.
+ */
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, session] of listSessions) {
+    if (now - session.createdAt > LIST_SESSION_TTL) {
+      listSessions.delete(key);
+    }
+  }
+}, 60000); // Clean up every minute
 
 // Helper to get Plex base URL
 function getPlexUrl(): string {
@@ -229,6 +311,143 @@ async function getAlbumTracks(
       duration: Number(track.duration || 0),
     };
   });
+}
+
+// ── Library Navigation Functions ──────────────────────────────────────────────
+
+/**
+ * Get all artists from Plex music library
+ */
+async function getArtists(
+  client: PlexAPI,
+  sectionsKey: string = "1",
+  ctx?: CommandContext,
+): Promise<ListItem[]> {
+  try {
+    const result = await client.query(`/library/sections/${sectionsKey}/all?type=8`);
+    if (!result.MediaContainer?.Metadata) return [];
+
+    const items: ListItem[] = result.MediaContainer.Metadata
+      .filter((artist: Record<string, unknown>) => artist.type === "artist")
+      .map((artist: Record<string, unknown>, idx: number) => ({
+        index: idx + 1,
+        key: String(artist.key || ""),
+        title: String(artist.title || "Unknown Artist"),
+        subtitle: `${artist.childCount || 0} albums`,
+        thumb: String(artist.thumb || ""),
+        type: "artists" as ListLevel,
+      }));
+
+    return items;
+  } catch (err) {
+    ctx?.log.error("Failed to get artists", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+/**
+ * Get albums for a specific artist
+ */
+async function getArtistAlbums(
+  client: PlexAPI,
+  artistKey: string,
+  ctx?: CommandContext,
+): Promise<ListItem[]> {
+  try {
+    const result = await client.query(artistKey);
+    if (!result.MediaContainer?.Metadata) return [];
+
+    const items: ListItem[] = result.MediaContainer.Metadata
+      .filter((item: Record<string, unknown>) => item.type === "album")
+      .map((album: Record<string, unknown>, idx: number) => ({
+        index: idx + 1,
+        key: String(album.key || ""),
+        title: String(album.title || "Unknown Album"),
+        subtitle: `${album.childCount || 0} tracks`,
+        thumb: String(album.thumb || ""),
+        type: "albums" as ListLevel,
+        parentKey: artistKey,
+      }));
+
+    return items;
+  } catch (err) {
+    ctx?.log.error("Failed to get artist albums", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+/**
+ * Get tracks for a specific album
+ */
+async function getAlbumTracksList(
+  client: PlexAPI,
+  albumKey: string,
+  artistName?: string,
+  ctx?: CommandContext,
+): Promise<ListItem[]> {
+  try {
+    const result = await client.query(albumKey);
+    if (!result.MediaContainer?.Metadata) return [];
+
+    const items: ListItem[] = result.MediaContainer.Metadata
+      .filter((item: Record<string, unknown>) => item.type === "track")
+      .map((track: Record<string, unknown>, idx: number) => {
+        let artist = artistName || "";
+        if (!artist && "originalTitle" in track && track.originalTitle) {
+          artist = String(track.originalTitle);
+        } else if (!artist && "grandparentTitle" in track) {
+          artist = String(track.grandparentTitle);
+        }
+        
+        const media = track.Media as Array<Record<string, unknown>>;
+        const partArray = (media?.[0] as Record<string, unknown>)?.Part as Array<Record<string, unknown>>;
+        const part = partArray?.[0] as Record<string, unknown>;
+        
+        return {
+          index: idx + 1,
+          key: String(part?.key || track.key || ""),
+          title: String(track.title || "Unknown Track"),
+          subtitle: formatDuration(Number(track.duration || 0)),
+          thumb: String(track.thumb || ""),
+          type: "tracks" as ListLevel,
+          duration: Number(track.duration || 0),
+          artist,
+        };
+      });
+
+    return items;
+  } catch (err) {
+    ctx?.log.error("Failed to get album tracks", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+/**
+ * Format list items into a display string
+ */
+function formatListDisplay(items: ListItem[], level: ListLevel): string {
+  const lines: string[] = [];
+  const header = level === "artists" 
+    ? "🎵 **Artists**" 
+    : level === "albums" 
+      ? "💿 **Albums**" 
+      : "🎶 **Tracks**";
+  
+  lines.push(header);
+  lines.push("─".repeat(40));
+
+  for (const item of items) {
+    const subtitle = item.subtitle ? ` • ${item.subtitle}` : "";
+    lines.push(`${item.index}. **${item.title}**${subtitle}`);
+  }
+
+  return lines.join("\n");
 }
 
 // ── Format Helpers ────────────────────────────────────────────────────────────
@@ -866,6 +1085,12 @@ const helpCommand = definePluginCommand({
       "`/plex-clearqueue` - Clear all songs",
       "`/plex-remove <position>` - Remove a song",
       "",
+      "**Browse Library:**",
+      "`/plex-list` - List all artists",
+      "`/plex-list <query>` - List albums of an artist or tracks of an album",
+      "`/plex-list <number>` - Browse deeper into the list",
+      "`/plex-add-to-queue <number>` - Add a track to queue by number",
+      "",
       "**Info:**",
       "`/plex-nowplaying` - Show current track",
       "`/plex-search <query>` - Search Plex library",
@@ -878,6 +1103,381 @@ const helpCommand = definePluginCommand({
     ];
 
     return { content: lines.join("\n"), ephemeral: true };
+  },
+});
+
+// ── List Navigation Commands ─────────────────────────────────────────────────
+
+const listCommand = definePluginCommand({
+  name: "plex-list",
+  description: "Browse Plex library by Artist > Album > Track hierarchy",
+  scope: "guild",
+  integrationTypes: ["guild_install"],
+  contexts: ["Guild"],
+  options: [
+    {
+      type: ApplicationCommandOptionType.String,
+      name: "query",
+      description: "Artist or Album name to browse (optional - lists all artists if not provided)",
+      required: false,
+    },
+    {
+      type: ApplicationCommandOptionType.Integer,
+      name: "number",
+      description: "Item number from previous list to browse into",
+      required: false,
+      min_value: 1,
+    },
+  ],
+  async handler(ctx: CommandContext): Promise<CommandReply> {
+    if (!ctx.guildId || !ctx.channelId) {
+      return { content: "Use this inside a server channel.", ephemeral: true };
+    }
+
+    if (!plexClient || !plexConfig) {
+      return {
+        content: "Plex is not configured. Ask an admin to set up the Plex connection.",
+        ephemeral: true,
+      };
+    }
+
+    const query = String(ctx.options.query || "").trim();
+    const itemNumber = Number(ctx.options.number || 0);
+
+    try {
+      // Get current session to determine context
+      const session = await getListSession(ctx);
+      const sectionsKey = plexConfig.sectionsKey || "1";
+
+      // Case 1: No query, no number - List all artists (root level)
+      if (!query && !itemNumber) {
+        const artists = await getArtists(plexClient, sectionsKey, ctx);
+        
+        if (artists.length === 0) {
+          return { content: "No artists found in your Plex library.", ephemeral: true };
+        }
+
+        const newSession: ListSession = {
+          guildId: ctx.guildId,
+          channelId: ctx.channelId,
+          level: "artists",
+          items: artists,
+          createdAt: Date.now(),
+        };
+        setListSession(ctx, newSession);
+
+        const display = formatListDisplay(artists, "artists");
+        return {
+          content: `${display}\n\n_Use \`/plex-list <Artist name> <number>\` or \`/plex-list <number>\` to browse into an artist._`,
+          ephemeral: true,
+        };
+      }
+
+      // Case 2: Has item number - use current session
+      if (itemNumber && session) {
+        const item = session.items.find(i => i.index === itemNumber);
+        
+        if (!item) {
+          return { 
+            content: `Invalid item number. Current list has ${session.items.length} items.\n\n${formatListDisplay(session.items, session.level)}`, 
+            ephemeral: true 
+          };
+        }
+
+        if (session.level === "artists") {
+          // Browse into artist's albums
+          const artistName = item.title;
+          const albums = await getArtistAlbums(plexClient, item.key, ctx);
+          
+          if (albums.length === 0) {
+            return { content: `No albums found for **${artistName}**.`, ephemeral: true };
+          }
+
+          const newSession: ListSession = {
+            guildId: ctx.guildId,
+            channelId: ctx.channelId,
+            level: "albums",
+            items: albums,
+            parentQuery: artistName,
+            createdAt: Date.now(),
+          };
+          setListSession(ctx, newSession);
+
+          const display = formatListDisplay(albums, "albums");
+          return {
+            content: `${display}\n\n**Albums by ${artistName}**\n_Use \`/plex-list <number>\` to browse into an album, or \`/plex-add-to-queue <number>\` to add a track from an album._`,
+            ephemeral: true,
+          };
+        } else if (session.level === "albums") {
+          // Browse into album's tracks
+          const artistName = session.parentQuery || "";
+          const tracks = await getAlbumTracksList(plexClient, item.key, artistName, ctx);
+          
+          if (tracks.length === 0) {
+            return { content: `No tracks found in **${item.title}**.`, ephemeral: true };
+          }
+
+          // Keep session at albums level for context, but allow add-to-queue
+          const newSession: ListSession = {
+            guildId: ctx.guildId,
+            channelId: ctx.channelId,
+            level: "tracks",
+            items: tracks,
+            parentQuery: item.title,
+            createdAt: Date.now(),
+          };
+          setListSession(ctx, newSession);
+
+          const display = formatListDisplay(tracks, "tracks");
+          return {
+            content: `${display}\n\n**Tracks in ${item.title}**\n_Use \`/plex-add-to-queue <number>\` to add a track to the queue._`,
+            ephemeral: true,
+          };
+        } else {
+          // Already at tracks level - show track info
+          const track = item;
+          const totalDuration = session.items.reduce((sum, t) => sum + (t.duration || 0), 0);
+          const totalTimeFormatted = formatDuration(totalDuration);
+          
+          return {
+            content: `🎵 **${track.title}**\n` +
+              `**Artist:** ${track.artist || "Unknown"}\n` +
+              `**Album:** ${session.parentQuery || "Unknown"}\n` +
+              `**Duration:** ${track.subtitle}\n\n` +
+              `_Use \`/plex-add-to-queue <number>\` to add to queue._`,
+            ephemeral: true,
+          };
+        }
+      }
+
+      // Case 3: Has query but no number - search and show results
+      if (query && !itemNumber) {
+        // First check if query matches an artist in the library
+        const artists = await getArtists(plexClient, sectionsKey, ctx);
+        const matchedArtist = artists.find(a => 
+          a.title.toLowerCase().includes(query.toLowerCase())
+        );
+
+        if (matchedArtist) {
+          // Found artist - show its albums
+          const albums = await getArtistAlbums(plexClient, matchedArtist.key, ctx);
+          
+          if (albums.length === 0) {
+            return { content: `No albums found for **${matchedArtist.title}**.`, ephemeral: true };
+          }
+
+          const newSession: ListSession = {
+            guildId: ctx.guildId,
+            channelId: ctx.channelId,
+            level: "albums",
+            items: albums,
+            parentQuery: matchedArtist.title,
+            createdAt: Date.now(),
+          };
+          setListSession(ctx, newSession);
+
+          const display = formatListDisplay(albums, "albums");
+          return {
+            content: `${display}\n\n**Albums by ${matchedArtist.title}**\n_Use \`/plex-list <number>\` to browse into an album._`,
+            ephemeral: true,
+          };
+        }
+
+        // Try to match album
+        for (const artist of artists) {
+          const albums = await getArtistAlbums(plexClient, artist.key, ctx);
+          const matchedAlbum = albums.find(a => 
+            a.title.toLowerCase().includes(query.toLowerCase())
+          );
+          
+          if (matchedAlbum) {
+            // Found album - show its tracks
+            const tracks = await getAlbumTracksList(plexClient, matchedAlbum.key, artist.title, ctx);
+            
+            if (tracks.length === 0) {
+              return { content: `No tracks found in **${matchedAlbum.title}**.`, ephemeral: true };
+            }
+
+            const newSession: ListSession = {
+              guildId: ctx.guildId,
+              channelId: ctx.channelId,
+              level: "tracks",
+              items: tracks,
+              parentQuery: matchedAlbum.title,
+              createdAt: Date.now(),
+            };
+            setListSession(ctx, newSession);
+
+            const display = formatListDisplay(tracks, "tracks");
+            return {
+              content: `${display}\n\n**Tracks in ${matchedAlbum.title}**\n_Use \`/plex-add-to-queue <number>\` to add a track to the queue._`,
+              ephemeral: true,
+            };
+          }
+        }
+
+        return { content: `No artists or albums found matching **${query}**.`, ephemeral: true };
+      }
+
+      // Case 4: Has query and number - browse specific artist by number from artists list
+      if (query && itemNumber) {
+        const artists = await getArtists(plexClient, sectionsKey, ctx);
+        
+        // Try to find artist by name first
+        const matchedArtist = artists.find(a => 
+          a.title.toLowerCase().includes(query.toLowerCase())
+        );
+
+        if (matchedArtist) {
+          const albums = await getArtistAlbums(plexClient, matchedArtist.key, ctx);
+          
+          if (albums.length === 0) {
+            return { content: `No albums found for **${matchedArtist.title}**.`, ephemeral: true };
+          }
+
+          const newSession: ListSession = {
+            guildId: ctx.guildId,
+            channelId: ctx.channelId,
+            level: "albums",
+            items: albums,
+            parentQuery: matchedArtist.title,
+            createdAt: Date.now(),
+          };
+          setListSession(ctx, newSession);
+
+          const display = formatListDisplay(albums, "albums");
+          return {
+            content: `${display}\n\n**Albums by ${matchedArtist.title}**\n_Use \`/plex-list <number>\` to browse into an album._`,
+            ephemeral: true,
+          };
+        }
+
+        return { content: `No artist found matching **${query}**.`, ephemeral: true };
+      }
+
+      return { content: "Something went wrong. Try using `/plex-list` without arguments.", ephemeral: true };
+    } catch (err) {
+      ctx.log.error("List command failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        content: "Failed to browse Plex library. Please try again.",
+        ephemeral: true,
+      };
+    }
+  },
+});
+
+const addToQueueCommand = definePluginCommand({
+  name: "plex-add-to-queue",
+  description: "Add a track to the queue by its number from the list",
+  scope: "guild",
+  integrationTypes: ["guild_install"],
+  contexts: ["Guild"],
+  options: [
+    {
+      type: ApplicationCommandOptionType.Integer,
+      name: "number",
+      description: "Track number from the current list",
+      required: true,
+      min_value: 1,
+    },
+  ],
+  async handler(ctx: CommandContext): Promise<CommandReply> {
+    if (!ctx.guildId || !ctx.channelId) {
+      return { content: "Use this inside a server channel.", ephemeral: true };
+    }
+
+    if (!plexClient || !plexConfig) {
+      return {
+        content: "Plex is not configured. Ask an admin to set up the Plex connection.",
+        ephemeral: true,
+      };
+    }
+
+    const itemNumber = Number(ctx.options.number || 0);
+    const session = await getListSession(ctx);
+
+    if (!session) {
+      return { 
+        content: "No active list session. Use `/plex-list` first to browse the library.", 
+        ephemeral: true 
+      };
+    }
+
+    // Only allow adding from tracks level
+    if (session.level !== "tracks") {
+      return { 
+        content: `Currently at ${session.level === "artists" ? "artists" : "albums"} level. Use \`/plex-list <number>\` to navigate to tracks.`,
+        ephemeral: true 
+      };
+    }
+
+    const item = session.items.find(i => i.index === itemNumber);
+    
+    if (!item) {
+      return { 
+        content: `Invalid track number. Current list has ${session.items.length} tracks.\n\n${formatListDisplay(session.items, "tracks")}`, 
+        ephemeral: true 
+      };
+    }
+
+    try {
+      const state = await getGuildState(ctx);
+      
+      // Check if user is in voice channel (required for adding to queue)
+      const voiceStatus = await ctx.voice.status(ctx.guildId);
+      if (!voiceStatus.connected) {
+        return {
+          content: "You need to be in a voice channel. Use `/plex-join` first.",
+          ephemeral: true,
+        };
+      }
+
+      const queuedTrack: QueuedTrack = {
+        key: item.key,
+        title: item.title,
+        artist: item.artist || "Unknown Artist",
+        album: session.parentQuery || "",
+        thumb: item.thumb || "",
+        duration: item.duration || 0,
+        queuedBy: ctx.userDisplayName,
+        queuedAt: Date.now(),
+      };
+
+      // If nothing is playing, start playback immediately
+      if (!state.isPlaying) {
+        state.currentTrack = queuedTrack;
+        state.isPlaying = true;
+        await saveGuildState(ctx, state);
+
+        const plexUrl = getPlexUrl();
+        const playUrl = `${plexUrl}${item.key}?X-Plex-Token=${plexConfig.token}`;
+
+        await ctx.voice.play({ guildId: ctx.guildId, url: playUrl });
+        startPlaybackTracker(ctx, ctx.guildId, item.duration || 0);
+
+        return {
+          content: `🎵 Now playing: **${queuedTrack.artist}** - ${queuedTrack.title}`,
+        };
+      } else {
+        // Add to queue
+        state.queue.push(queuedTrack);
+        await saveGuildState(ctx, state);
+
+        return {
+          content: `✅ Added to queue (#${state.queue.length}): **${queuedTrack.artist}** - ${queuedTrack.title}`,
+        };
+      }
+    } catch (err) {
+      ctx.log.error("Add to queue failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        content: "Failed to add track to queue. Please try again.",
+        ephemeral: true,
+      };
+    }
   },
 });
 
@@ -906,6 +1506,8 @@ const musicFeature = defineGuildFeature({
     volumeCommand,
     nowplayingCommand,
     searchCommand,
+    listCommand,
+    addToQueueCommand,
     joinCommand,
     leaveCommand,
     helpCommand,
