@@ -1,6 +1,6 @@
 # karyl-chan-plugin-plex-discord-bot
 
-本專案包含 karyl-chan 的 Plex 音樂播放插件，可在 Discord 中透過指令搜尋並播放 Plex 音樂庫的歌曲。
+本專案為 karyl-chan 的 Plex 音樂播放插件，可在 Discord 中透過指令搜尋並播放 Plex 音樂庫的歌曲。
 
 ## 目錄結構
 
@@ -11,10 +11,20 @@ karyl-chan-plugin-plex-discord-bot/
 ├── packages/
 │   └── plugin-plex/          # Plex 插件本體
 │       ├── Dockerfile
+│       ├── README.md          # Plugin 詳細說明文件
 │       ├── src/
 │       └── ...
 └── ...
 ```
+
+## 功能特色
+
+- **瀏覽音樂庫**：以 Artist → Album → Track 階層式瀏覽 Plex 音樂庫
+- **智慧搜尋**：搜尋歌曲、專輯或藝術家，統一呈現結果
+- **佇列系統**：將歌曲或專輯加入佇列，管理播放清單
+- **語音播放**：加入 Discord 語音頻道，直接從 Plex 串流音樂
+- **播放控制**：播放、暫停、恢復、跳過、停止、音量控制
+- **現在播放**：查看當前曲目與接下來的播放清單
 
 ## 本機 Docker 測試
 
@@ -46,7 +56,7 @@ cp .env.example .env
 # - ENCRYPTION_KEY   （產生方式見下方）
 # - BOT_OWNER_IDS    （你的 Discord User ID）
 # - PLEX_HOSTNAME    （Plex 伺服器 IP/hostname）
-# - PLEX_PORT        （Plex 伺服器 Port)
+# - PLEX_PORT        （Plex 伺服器 Port，預設 32400）
 # - PLEX_TOKEN       （Plex 認證 token）
 ```
 
@@ -102,37 +112,28 @@ docker compose down
 
 ## 指令使用說明
 
-### 播放控制
+### 快速開始
 
-| 指令 | 說明 |
-|------|------|
-| `/plex-play <query>` | 搜尋並播放歌曲 |
-| `/plex-pause` | 暫停播放 |
-| `/plex-resume` | 恢復播放 |
-| `/plex-skip` | 跳過當前歌曲 |
-| `/plex-stop` | 停止播放並離開語音頻道 |
+1. 使用 `/plex-list` 或 `/plex-search` 找音樂
+2. 使用 `/plex-add-to-queue <編號>` 將歌曲或專輯加入佇列
+3. 使用 `/plex-play` 開始播放
 
 ### 佇列管理
 
 | 指令 | 說明 |
 |------|------|
+| `/plex-play` | 開始播放佇列中的歌曲 |
 | `/plex-queue [頁數]` | 檢視播放佇列 |
 | `/plex-clearqueue` | 清除所有歌曲 |
 | `/plex-remove <位置>` | 移除指定位置的歌曲 |
-| `/plex-add-to-queue <編號>` | 將瀏覽列表中的曲目加入佇列 |
 
-### 瀏覽 Plex 音樂庫
-
-`/plex-list` 指令讓你可以階層式瀏覽 Plex 音樂庫（Artist > Album > Track）。
-
-#### 基本用法
+### 瀏覽與搜尋
 
 | 指令 | 說明 |
 |------|------|
-| `/plex-list` | 列出所有 Artists（附流水號） |
-| `/plex-list <編號>` | 瀏覽指定項目（依當前層級進入 Artist/Album） |
-| `/plex-list <關鍵字>` | 搜尋 Artist 或 Album |
-| `/plex-list <關鍵字> <編號>` | 搜尋後瀏覽結果 |
+| `/plex-list [查詢]` | 瀏覽音樂庫（Artist > Album > Track） |
+| `/plex-list <編號>` | 深入瀏覽列表 |
+| `/plex-search <關鍵字>` | 搜尋歌曲、專輯或藝術家 |
 
 #### 瀏覽流程範例
 
@@ -162,9 +163,42 @@ docker compose down
 #### 搜尋範例
 
 ```
-/plex-list 周杰倫                     → 搜尋並顯示所有周杰倫相關結果
-/plex-list 周杰倫 1                   → 進入第一個結果（會是 Artist 頁面）
+/plex-search 周杰倫                     → 搜尋並顯示所有周杰倫相關結果
+/plex-add-to-queue 1                    → 將第一個結果加入佇列
 ```
+
+### 加入佇列
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-add-to-queue <編號>` | 將歌曲或專輯加入佇列 |
+
+- 從搜尋結果加入：支援歌曲、專輯（加入所有歌曲）、藝術家（需先瀏覽）
+- 從列表加入：支援歌曲和專輯（加入所有歌曲）
+
+### 播放控制
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-pause` | 暫停播放 |
+| `/plex-resume` | 恢復播放 |
+| `/plex-skip` | 跳過當前歌曲 |
+| `/plex-stop` | 停止播放並離開語音頻道 |
+| `/plex-volume <音量>` | 設定音量（0-100） |
+| `/plex-nowplaying` | 顯示當前播放曲目 |
+
+### 語音控制
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-join` | 加入你的語音頻道 |
+| `/plex-leave` | 離開語音頻道 |
+
+### 其他
+
+| 指令 | 說明 |
+|------|------|
+| `/plex-help` | 顯示所有指令說明 |
 
 #### 注意事項
 
@@ -172,17 +206,9 @@ docker compose down
 - 編號會話綁定頻道，不同頻道有獨立瀏覽狀態
 - 進入 Tracks 層級後，`/plex-list <編號>` 會顯示該曲目的詳細資訊（包含時長、格式等）
 
-### 其他指令
+## 環境變數說明
 
-| 指令 | 說明 |
-|------|------|
-| `/plex-nowplaying` | 顯示當前播放曲目 |
-| `/plex-search <query>` | 搜尋 Plex 音樂庫 |
-| `/plex-join` | 加入你的語音頻道 |
-| `/plex-leave` | 離開語音頻道 |
-| `/plex-help` | 顯示所有指令說明 |
-
-## Plugin 環境變數說明
+### Bot 核心環境變數
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
@@ -190,11 +216,25 @@ docker compose down
 | `BOT_TOKEN` | 是 | Discord bot token |
 | `ENCRYPTION_KEY` | 是 | 32 位元 hex 字串 |
 | `BOT_OWNER_IDS` | 是 | Bot 擁有者 Discord ID |
-| `PLEX_HOSTNAME` | 是 | Plex 伺服器 IP/hostname |
-| `PLEX_PORT` | 否 | Plex port，預設 32400 |
-| `PLEX_TOKEN` | 是 | Plex 認證 token |
-| `PLEX_SECTIONS_KEY` | 否 | 音樂庫 section key，預設 1 |
-| `PLEX_DEFAULT_VOLUME` | 否 | 預設音量 0-100，預設 20 |
+
+### Plex 環境變數
+
+| 變數 | 必填 | 說明 | 預設值 |
+|------|------|------|--------|
+| `PLEX_HOSTNAME` | 是 | Plex 伺服器 IP/hostname | |
+| `PLEX_PORT` | 否 | Plex port | `32400` |
+| `PLEX_TOKEN` | 是 | Plex 認證 token | |
+| `PLEX_SECTIONS_KEY` | 否 | 音樂庫 section key | `1` |
+| `PLEX_DEFAULT_VOLUME` | 否 | 預設音量 0-100 | `20` |
+
+## 架構說明
+
+本插件基於 [@karyl-chan/plugin-sdk](https://github.com/karyl-chan/karyl-chan/tree/main/packages/plugin-sdk) 建構：
+
+- **狀態管理**：使用 per-guild KV 儲存佇列和播放狀態
+- **語音整合**：使用 bot 的 voice RPC facade 處理 Discord 語音連線
+- **Plex API**：使用 `plex-api` npm 套件查詢 Plex 伺服器
+- **會話追蹤**：維護列表和搜尋會話，用於導航和佇列操作
 
 ## 開發相關
 
@@ -205,3 +245,9 @@ npm install
 npm run build
 npm start
 ```
+
+## 相關連結
+
+- [karyl-chan](https://github.com/karyl-chan/karyl-chan) - 主專案
+- [Plugin SDK](https://github.com/karyl-chan/karyl-chan/tree/main/packages/plugin-sdk) - 插件開發框架
+- [Plugin README](./packages/plugin-plex/README.md) - 插件詳細說明文件（英文）
