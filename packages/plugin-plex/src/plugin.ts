@@ -851,21 +851,27 @@ const skipCommand = definePluginCommand({
         // Restart tracker for new track
         startPlaybackTracker(ctx, ctx.guildId, ctx.channelId, nextTrack.duration);
 
-        // Send now playing message with album image
-        await ctx.discord.messages.send({
-          channelId: ctx.channelId,
-          content: `🎵 Now playing: **${nextTrack.artist}** - ${nextTrack.title}`,
-          embeds: nextTrack.thumb
-            ? [
-                {
-                  title: `${nextTrack.artist} - ${nextTrack.title}`,
-                  image: {
-                    url: `${plexUrl}/photo/:/transcode?url=${encodeURIComponent(nextTrack.thumb)}&width=300&height=300&X-Plex-Token=${plexConfig!.token}`,
+        // Send now playing message with album image (ignore errors - plugin may not be enabled)
+        try {
+          await ctx.discord.messages.send({
+            channelId: ctx.channelId,
+            content: `🎵 Now playing: **${nextTrack.artist}** - ${nextTrack.title}`,
+            embeds: nextTrack.thumb
+              ? [
+                  {
+                    title: `${nextTrack.artist} - ${nextTrack.title}`,
+                    image: {
+                      url: `${plexUrl}/photo/:/transcode?url=${encodeURIComponent(nextTrack.thumb)}&width=300&height=300&X-Plex-Token=${plexConfig!.token}`,
+                    },
                   },
-                },
-              ]
-            : [],
-        });
+                ]
+              : [],
+          });
+        } catch (err) {
+          ctx.log.warn("Failed to send now playing message in skip command", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
 
         return {
           content: `⏭️ Skipped! Now playing: **${nextTrack.artist}** - ${nextTrack.title}`,
@@ -1893,6 +1899,7 @@ interface PlaybackContext {
   log: {
     info(message: string, data?: Record<string, unknown>): void;
     error(message: string, data?: Record<string, unknown>): void;
+    warn(message: string, data?: Record<string, unknown>): void;
   };
 }
 
@@ -1968,13 +1975,19 @@ function startPlaybackTracker(ctx: PlaybackContext, guildId: string, channelId: 
 
           await ctx.voice.play({ guildId, url: playUrl });
 
-          // Send now playing message with album image
-          await sendNowPlayingMessage(ctx, channelId, {
-            title: nextTrack.title,
-            artist: nextTrack.artist,
-            album: nextTrack.album,
-            thumb: nextTrack.thumb,
-          });
+          // Send now playing message with album image (ignore errors - plugin may not be enabled)
+          try {
+            await sendNowPlayingMessage(ctx, channelId, {
+              title: nextTrack.title,
+              artist: nextTrack.artist,
+              album: nextTrack.album,
+              thumb: nextTrack.thumb,
+            });
+          } catch (err) {
+            ctx.log.warn("Failed to send now playing message", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
 
           // Restart tracker for new track (this replaces current tracker)
           startPlaybackTracker(ctx, guildId, channelId, nextTrack.duration);
