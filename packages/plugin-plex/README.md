@@ -6,6 +6,7 @@ A [karyl-chan](https://github.com/karyl-chan/karyl-chan) plugin that enables sea
 
 - **Browse Library**: Navigate your Plex music library by Artist → Album → Track hierarchy
 - **Smart Search**: Search for tracks, albums, or artists with unified results
+- **Random Play**: Randomly add songs from your entire library to the queue
 - **Queue System**: Add tracks or entire albums to queue, manage your playback queue
 - **Voice Playback**: Join your Discord voice channel and stream music directly from Plex
 - **Playback Controls**: Play, pause, resume, skip, stop, volume control
@@ -33,6 +34,14 @@ A [karyl-chan](https://github.com/karyl-chan/karyl-chan) plugin that enables sea
 | `/plex-list [query]` | Browse library (Artist > Album > Track) |
 | `/plex-list <number>` | Browse deeper into the list |
 | `/plex-search <query>` | Search for tracks, albums, or artists |
+| `/plex-random-song <number>` | Add random songs from entire library to queue |
+
+### Random Play Examples
+
+```
+/plex-random-song 10                     # Add 10 random songs to queue
+/plex-random-song 1000                   # If library has only 500 songs, adds all in random order
+```
 
 ### Add to Queue
 | Command | Description |
@@ -77,6 +86,12 @@ A [karyl-chan](https://github.com/karyl-chan/karyl-chan) plugin that enables sea
 ```
 /plex-search imagine dragons            # Search for tracks/albums/artists
 /plex-add-to-queue 1                    # Add result #1 to queue
+```
+
+### Random Play
+```
+/plex-random-song 10                   # Add 10 random songs to queue
+/plex-play                              # Start playing from queue
 ```
 
 ### Play Music

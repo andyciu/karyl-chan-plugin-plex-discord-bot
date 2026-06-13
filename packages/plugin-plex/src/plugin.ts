@@ -523,6 +523,85 @@ async function getAlbumTracks(
 }
 
 /**
+ * Get all tracks from the entire Plex music library
+ */
+async function getAllTracks(
+  client: PlexAPI,
+  sectionsKey: string = "1",
+  ctx?: CommandContext,
+): Promise<PlexTrack[]> {
+  const tracks: PlexTrack[] = [];
+
+  try {
+    // Get all artists first
+    const artistsResult = await client.query(`/library/sections/${sectionsKey}/all?type=8`);
+    if (!artistsResult.MediaContainer?.Metadata) return [];
+
+    const artists = artistsResult.MediaContainer.Metadata.filter(
+      (artist: Record<string, unknown>) => artist.type === "artist"
+    );
+
+    for (const artist of artists) {
+      const artistKey = String(artist.key || "");
+      const artistName = String(artist.title || "Unknown Artist");
+
+      // Get albums for each artist
+      try {
+        const albumsResult = await client.query(artistKey);
+        if (!albumsResult.MediaContainer?.Metadata) continue;
+
+        const albums = albumsResult.MediaContainer.Metadata.filter(
+          (item: Record<string, unknown>) => item.type === "album"
+        );
+
+        for (const album of albums) {
+          const albumKey = String(album.key || "");
+          const albumTitle = String(album.title || "Unknown Album");
+          const albumThumb = String(album.thumb || "");
+
+          // Get tracks for each album
+          try {
+            const tracksResult = await client.query(albumKey);
+            if (!tracksResult.MediaContainer?.Metadata) continue;
+
+            const albumTracks = tracksResult.MediaContainer.Metadata.filter(
+              (item: Record<string, unknown>) => item.type === "track"
+            );
+
+            for (const track of albumTracks) {
+              // Extract the playable key from Media[0].Part[0].key
+              const media = track.Media as Array<Record<string, unknown>> | undefined;
+              const partArray = (media?.[0] as Record<string, unknown>)?.Part as Array<Record<string, unknown>> | undefined;
+              const part = partArray?.[0] as Record<string, unknown> | undefined;
+              const playableKey = String(part?.key || track.key || "");
+
+              tracks.push({
+                key: playableKey,
+                title: String(track.title || "Unknown Track"),
+                artist: artistName,
+                album: albumTitle,
+                thumb: albumThumb || String(track.thumb || ""),
+                duration: Number(track.duration || 0),
+              });
+            }
+          } catch {
+            // Skip album if tracks query fails
+          }
+        }
+      } catch {
+        // Skip artist if albums query fails
+      }
+    }
+  } catch (err) {
+    ctx?.log.error("Failed to get all tracks", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return tracks;
+}
+
+/**
  * Get all artists from Plex music library
  */
 async function getArtists(
@@ -1306,6 +1385,7 @@ const helpCommand = definePluginCommand({
       "**Browse & Search:**",
       "`/plex-list [query]` - Browse library (Artist > Album > Track)",
       "`/plex-search <query>` - Search for tracks, albums, or artists",
+      "`/plex-random-song <number>` - Add random songs from entire library",
       "",
       "**Add to Queue:**",
       "`/plex-add-to-queue <number>` - Add track/album to queue from list or search",
@@ -1330,6 +1410,99 @@ const helpCommand = definePluginCommand({
     ];
 
     return { content: lines.join("\n"), ephemeral: true };
+  },
+});
+
+const randomSongCommand = definePluginCommand({
+  name: "plex-random-song",
+  description: "Add random songs to queue from entire Plex library",
+  scope: "guild",
+  integrationTypes: ["guild_install"],
+  contexts: ["Guild"],
+  options: [
+    {
+      type: ApplicationCommandOptionType.Integer,
+      name: "number",
+      description: "Number of random songs to add to queue",
+      required: true,
+      min_value: 1,
+    },
+  ],
+  async handler(ctx: CommandContext): Promise<CommandReply> {
+    if (!ctx.guildId || !ctx.channelId) {
+      return { content: "Use this inside a server channel.", ephemeral: true };
+    }
+
+    if (!plexClient || !plexConfig) {
+      return {
+        content: "Plex is not configured. Ask an admin to set up the Plex connection.",
+        ephemeral: true,
+      };
+    }
+
+    const requestedNumber = Number(ctx.options.number || 0);
+
+    if (requestedNumber <= 0) {
+      return { content: "Please provide a valid number greater than 0.", ephemeral: true };
+    }
+
+    try {
+      const state = await getGuildState(ctx);
+      const sectionsKey = plexConfig.sectionsKey || "1";
+
+      // Get all tracks from Plex library
+      const allTracks = await getAllTracks(plexClient, sectionsKey, ctx);
+
+      if (allTracks.length === 0) {
+        return { content: "No tracks found in your Plex music library.", ephemeral: true };
+      }
+
+      // Determine how many songs to add
+      const actualCount = Math.min(requestedNumber, allTracks.length);
+
+      // Shuffle and pick tracks (Fisher-Yates shuffle)
+      const shuffled = [...allTracks];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      const selectedTracks = shuffled.slice(0, actualCount);
+
+      // Add to queue
+      for (const track of selectedTracks) {
+        const queuedTrack: QueuedTrack = {
+          key: track.key,
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          thumb: track.thumb,
+          duration: track.duration,
+          queuedBy: ctx.userDisplayName,
+          queuedAt: Date.now(),
+        };
+        state.queue.push(queuedTrack);
+      }
+      await saveGuildState(ctx, state);
+
+      if (requestedNumber > allTracks.length) {
+        return {
+          content: `✅ Added all ${actualCount} tracks in random order to queue.\n\nUse \`/plex-play\` when ready to start playing.`,
+        };
+      } else {
+        return {
+          content: `✅ Added ${actualCount} random songs to queue.\n\nUse \`/plex-play\` when ready to start playing.`,
+        };
+      }
+    } catch (err) {
+      ctx.log.error("Random song command failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        content: "Failed to add random songs. Please try again.",
+        ephemeral: true,
+      };
+    }
   },
 });
 
@@ -1849,6 +2022,7 @@ const musicFeature = defineGuildFeature({
     searchCommand,
     listCommand,
     addToQueueCommand,
+    randomSongCommand,
     joinCommand,
     leaveCommand,
     helpCommand,

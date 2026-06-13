@@ -21,6 +21,7 @@ karyl-chan-plugin-plex-discord-bot/
 
 - **瀏覽音樂庫**：以 Artist → Album → Track 階層式瀏覽 Plex 音樂庫
 - **智慧搜尋**：搜尋歌曲、專輯或藝術家，統一呈現結果
+- **隨機播放**：從整個音樂庫隨機挑選歌曲加入佇列
 - **佇列系統**：將歌曲或專輯加入佇列，管理播放清單
 - **語音播放**：加入 Discord 語音頻道，直接從 Plex 串流音樂
 - **播放控制**：播放、暫停、恢復、跳過、停止、音量控制
@@ -134,6 +135,14 @@ docker compose down
 | `/plex-list [查詢]` | 瀏覽音樂庫（Artist > Album > Track） |
 | `/plex-list <編號>` | 深入瀏覽列表 |
 | `/plex-search <關鍵字>` | 搜尋歌曲、專輯或藝術家 |
+| `/plex-random-song <數量>` | 從整個音樂庫隨機挑選歌曲加入佇列 |
+
+#### 隨機播放範例
+
+```
+/plex-random-song 10                    → 隨機加入 10 首歌到佇列
+/plex-random-song 1000                  → 若library只有500首歌，會全部隨機排序後加入
+```
 
 #### 瀏覽流程範例
 
