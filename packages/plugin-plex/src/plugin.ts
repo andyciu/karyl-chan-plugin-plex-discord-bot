@@ -870,6 +870,8 @@ const skipCommand = definePluginCommand({
         } catch (err) {
           ctx.log.warn("Failed to send now playing message in skip command", {
             error: err instanceof Error ? err.message : String(err),
+            guildId: ctx.guildId,
+            channelId: ctx.channelId,
           });
         }
 
@@ -1373,6 +1375,9 @@ const listCommand = definePluginCommand({
       // Get current session to determine context
       const session = await getListSession(ctx);
       const sectionsKey = plexConfig.sectionsKey || "1";
+
+      // Clear search session when using list command to avoid confusion
+      clearSearchSession(ctx);
 
       // Case 1: No query, no number - List all artists (root level)
       if (!query && !itemNumber) {
